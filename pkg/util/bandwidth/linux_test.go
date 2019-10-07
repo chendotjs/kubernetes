@@ -121,6 +121,11 @@ func TestHexCIDR(t *testing.T) {
 			output: "20010000000000000000000000000005/ffffffffffffffffffffffffffffffff",
 		},
 		{
+			name:   "IPv6 all hosts",
+			input:  "::1/0",
+			output: "00000000000000000000000000000000/00000000000000000000000000000000",
+		},
+		{
 			name:      "invalid CIDR",
 			input:     "foo",
 			expectErr: true,
@@ -172,6 +177,11 @@ func TestAsciiCIDR(t *testing.T) {
 			output: "2001::5/128",
 		},
 		{
+			name:   "IPv6 all hosts",
+			input:  "00000000000000000000000000000000/00000000000000000000000000000000",
+			output: "::/0",
+		},
+		{
 			name:      "invalid CIDR",
 			input:     "malformed",
 			expectErr: true,
@@ -205,12 +215,85 @@ func TestAsciiCIDR(t *testing.T) {
 	}
 }
 
-var tcFilterOutput = `filter parent 1: protocol ip pref 1 u32 
+var tcFilterOutputIPv4 = `filter parent 1: protocol ip pref 1 u32
 filter parent 1: protocol ip pref 1 u32 fh 800: ht divisor 1 
 filter parent 1: protocol ip pref 1 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 
   match ac110002/ffffffff at 16
 filter parent 1: protocol ip pref 1 u32 fh 800::801 order 2049 key ht 800 bkt 0 flowid 1:2 
   match 01020000/ffff0000 at 16
+`
+var tcFilterOutputIPv4New = `filter parent 1: protocol ip pref 1 u32
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw
+  match ac110002/ffffffff at 16
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::801 order 2049 key ht 800 bkt 0 flowid 1:2 not_in_hw
+  match 01020000/ffff0000 at 16
+`
+
+var tcFilterOutputIPv6 = `filter parent 1: protocol ipv6 pref 2 u32 
+filter parent 1: protocol ipv6 pref 2 u32 fh 800: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 
+  match 20010da8/ffffffff at 24
+  match 80006023/ffffffff at 28
+  match 00000000/ffffffff at 32
+  match 00000230/ffffffff at 36
+filter parent 1: protocol ipv6 pref 2 u32 fh 800::801 order 2049 key ht 800 bkt 0 flowid 1:2 
+  match 20010db8/ffffffff at 8
+  match 86a308d3/ffffffff at 12
+`
+
+var tcFilterOutputIPv6AllHosts1 = `filter parent 1: protocol ipv6 pref 2 u32 chain 0 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+`
+
+var tcFilterOutputIPv6AllHosts2 = `filter parent 1: protocol ipv6 pref 2 u32 chain 0 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 800::801 order 2049 key ht 800 bkt 0 flowid 1:2 not_in_hw 
+  match 00000000/ffffffff at 8
+  match 00000000/ffffffff at 12
+`
+
+var tcFilterOutputIPv4IPv6Mixture = `filter parent 1: protocol ip pref 1 u32
+filter parent 1: protocol ip pref 1 u32 fh 801: ht divisor 1
+filter parent 1: protocol ip pref 1 u32 fh 801::800 order 2048 key ht 801 bkt 0 flowid 1:1
+  match ca783a9d/ffffffff at 16
+filter parent 1: protocol ip pref 1 u32 fh 801::801 order 2049 key ht 801 bkt 0 flowid 1:2
+  match 01020304/ffffffff at 12
+filter parent 1: protocol ipv6 pref 2 u32
+filter parent 1: protocol ipv6 pref 2 u32 fh 800: ht divisor 1
+filter parent 1: protocol ipv6 pref 2 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1
+  match 20010da8/ffffffff at 24
+  match 80006023/ffffffff at 28
+  match 00000000/ffffffff at 32
+  match 00000230/ffffffff at 36
+filter parent 1: protocol ipv6 pref 2 u32 fh 800::801 order 2049 key ht 800 bkt 0 flowid 1:2
+  match 20010db8/ffffffff at 8
+  match 86a308d3/ffffffff at 12
+`
+
+var tcFilterOutputIPv4IPv6Similar1 = `filter parent 1: protocol ip pref 1 u32 chain 0 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+  match 01020304/ffffffff at 12
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801::800 order 2048 key ht 801 bkt 0 flowid 1:2 not_in_hw 
+  match 01020304/ffffffff at 8
+`
+
+var tcFilterOutputIPv4IPv6Similar2 = `filter parent 1: protocol ip pref 1 u32 chain 0 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+  match 01020304/ffffffff at 12
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801::800 order 2048 key ht 801 bkt 0 flowid 1:2 not_in_hw 
+  match 00000000/ffffffff at 8
+  match 00000000/ffffffff at 12
+  match 00000000/ffffffff at 16
+  match 01020304/ffffffff at 20
 `
 
 func TestFindCIDRClass(t *testing.T) {
@@ -225,20 +308,124 @@ func TestFindCIDRClass(t *testing.T) {
 	}{
 		{
 			cidr:           "172.17.0.2/32",
-			output:         tcFilterOutput,
+			output:         tcFilterOutputIPv4,
 			expectedClass:  "1:1",
 			expectedHandle: "800::800",
 		},
 		{
 			cidr:           "1.2.3.4/16",
-			output:         tcFilterOutput,
+			output:         tcFilterOutputIPv4,
 			expectedClass:  "1:2",
 			expectedHandle: "800::801",
 		},
 		{
 			cidr:           "2.2.3.4/16",
-			output:         tcFilterOutput,
+			output:         tcFilterOutputIPv4,
 			expectNotFound: true,
+		},
+		{
+			cidr:           "172.17.0.2/32",
+			output:         tcFilterOutputIPv4New,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "1.2.3.4/16",
+			output:         tcFilterOutputIPv4New,
+			expectedClass:  "1:2",
+			expectedHandle: "800::801",
+		},
+		{
+			cidr:           "2.2.3.4/16",
+			output:         tcFilterOutputIPv4New,
+			expectNotFound: true,
+		},
+		{
+			cidr:           "2001:da8:8000:6023::230/128",
+			output:         tcFilterOutputIPv6,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "2001:0db8:86a3:08d3::/64",
+			output:         tcFilterOutputIPv6,
+			expectedClass:  "1:2",
+			expectedHandle: "800::801",
+		},
+		{
+			cidr:           "0102:0304::/32",
+			output:         tcFilterOutputIPv6,
+			expectNotFound: true,
+		},
+		{
+			cidr:           "2001:0db8:86a3:08d3::/64",
+			output:         tcFilterOutputIPv6,
+			expectedClass:  "1:2",
+			expectedHandle: "800::801",
+		},
+		{
+			cidr:           "0102:0304::/32",
+			output:         tcFilterOutputIPv6,
+			expectNotFound: true,
+		},
+		{
+			cidr:           "::/0",
+			output:         tcFilterOutputIPv6AllHosts1,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "::/0",
+			output:         tcFilterOutputIPv6AllHosts2,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "::/64",
+			output:         tcFilterOutputIPv6AllHosts2,
+			expectedClass:  "1:2",
+			expectedHandle: "800::801",
+		},
+		{
+			cidr:           "1.2.3.4/32",
+			output:         tcFilterOutputIPv4IPv6Mixture,
+			expectedClass:  "1:2",
+			expectedHandle: "801::801",
+		},
+		{
+			cidr:           "2001:da8:8000:6023::230/128",
+			output:         tcFilterOutputIPv4IPv6Mixture,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "192.168.1.46/32",
+			output:         tcFilterOutputIPv4IPv6Mixture,
+			expectNotFound: true,
+		},
+		{
+			cidr:           "1.2.3.4/32",
+			output:         tcFilterOutputIPv4IPv6Similar1,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "0102:0304::/32",
+			output:         tcFilterOutputIPv4IPv6Similar1,
+			expectedClass:  "1:2",
+			expectedHandle: "801::800",
+		},
+		{
+			cidr:           "1.2.3.4/32",
+			output:         tcFilterOutputIPv4IPv6Similar2,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "::0102:0304/128",
+			output:         tcFilterOutputIPv4IPv6Similar2,
+			expectedClass:  "1:2",
+			expectedHandle: "801::800",
 		},
 		{
 			err:       errors.New("test error"),
@@ -285,26 +472,57 @@ func TestFindCIDRClass(t *testing.T) {
 }
 
 func TestGetCIDRs(t *testing.T) {
-	fcmd := fakeexec.FakeCmd{
-		CombinedOutputScript: []fakeexec.FakeAction{
-			func() ([]byte, []byte, error) { return []byte(tcFilterOutput), nil, nil },
+	tests := []struct {
+		output        string
+		expectedCidrs []string
+		expectErr     bool
+		err           error
+	}{
+		{
+			output:        tcFilterOutputIPv4,
+			expectedCidrs: []string{"172.17.0.2/32", "1.2.0.0/16"},
+		},
+		{
+			output:        tcFilterOutputIPv6,
+			expectedCidrs: []string{"2001:da8:8000:6023::230/128", "2001:db8:86a3:8d3::/64"},
+		},
+		{
+			output:        tcFilterOutputIPv4IPv6Mixture,
+			expectedCidrs: []string{"202.120.58.157/32", "1.2.3.4/32", "2001:da8:8000:6023::230/128", "2001:db8:86a3:8d3::/64"},
+		},
+		{
+			err:       errors.New("test error"),
+			expectErr: true,
 		},
 	}
-	fexec := fakeexec.FakeExec{
-		CommandScript: []fakeexec.FakeCommandAction{
-			func(cmd string, args ...string) exec.Cmd {
-				return fakeexec.InitFakeCmd(&fcmd, cmd, args...)
+	for _, test := range tests {
+		fcmd := fakeexec.FakeCmd{
+			CombinedOutputScript: []fakeexec.FakeAction{
+				func() ([]byte, []byte, error) { return []byte(test.output), nil, test.err },
 			},
-		},
-	}
-	shaper := &tcShaper{e: &fexec}
-	cidrs, err := shaper.GetCIDRs()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	expectedCidrs := []string{"172.17.0.2/32", "1.2.0.0/16"}
-	if !reflect.DeepEqual(cidrs, expectedCidrs) {
-		t.Errorf("expected: %v, saw: %v", expectedCidrs, cidrs)
+		}
+		fexec := fakeexec.FakeExec{
+			CommandScript: []fakeexec.FakeCommandAction{
+				func(cmd string, args ...string) exec.Cmd {
+					return fakeexec.InitFakeCmd(&fcmd, cmd, args...)
+				},
+			},
+		}
+		shaper := &tcShaper{e: &fexec}
+		cidrs, err := shaper.GetCIDRs()
+		if test.expectErr {
+			if err == nil {
+				t.Errorf("unexpected non-error")
+			}
+		} else {
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			expectedCidrs := test.expectedCidrs
+			if !reflect.DeepEqual(cidrs, expectedCidrs) {
+				t.Errorf("expected: %v, saw: %v", expectedCidrs, cidrs)
+			}
+		}
 	}
 }
 
@@ -468,7 +686,7 @@ func TestReset(t *testing.T) {
 	for _, test := range tests {
 		fcmd := fakeexec.FakeCmd{
 			CombinedOutputScript: []fakeexec.FakeAction{
-				func() ([]byte, []byte, error) { return []byte(tcFilterOutput), nil, test.err },
+				func() ([]byte, []byte, error) { return []byte(tcFilterOutputIPv4), nil, test.err },
 				func() ([]byte, []byte, error) { return []byte{}, nil, test.err },
 				func() ([]byte, []byte, error) { return []byte{}, nil, test.err },
 			},
@@ -700,5 +918,90 @@ func TestReconcileInterfaceIsWrong(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+var tcFilterOutputMatchLines1 = []string{
+	"match 20010db8/ffffffff at 8",
+	"match 86a308d3/ffffffff at 12",
+}
+
+var tcFilterOutputMatchLines2 = []string{
+	"match 00000000/ffffffff at 8",
+	"match 00000000/ffffffff at 12",
+	"match 00000000/ffffffff at 16",
+	"match 00000001/ffffffff at 20",
+}
+
+func TestRestoreIPv6HexCIDR(t *testing.T) {
+	tests := []struct {
+		name             string
+		outputMatchLines []string
+		want             string
+		wantErr          bool
+	}{
+		{
+			name:             "normal case 1",
+			outputMatchLines: tcFilterOutputMatchLines1,
+			want:             "20010db886a308d30000000000000000/ffffffffffffffff0000000000000000",
+		},
+		{
+			name:             "normal case 2",
+			outputMatchLines: tcFilterOutputMatchLines2,
+			want:             "00000000000000000000000000000001/ffffffffffffffffffffffffffffffff",
+		},
+		{
+			name:             "empty case",
+			outputMatchLines: []string{},
+			want:             "00000000000000000000000000000000/00000000000000000000000000000000",
+		},
+		{
+			name:             "error case",
+			outputMatchLines: []string{"not a match line"},
+			wantErr:          true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := restoreIPv6HexCIDR(tt.outputMatchLines)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("restoreIPv6HexCIDR() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("restoreIPv6HexCIDR() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsIPv6CIDRString(t *testing.T) {
+	tests := []struct {
+		name string
+		cidr string
+		want bool
+	}{
+		{
+			name: "normal IPv4",
+			cidr: "1.2.3.4/32",
+			want: false,
+		},
+		{
+			name: "normal IPv6",
+			cidr: "::1/128",
+			want: true,
+		},
+		{
+			name: "IPv4 in IPv6 format",
+			cidr: "::ffff:1.2.3.4/128",
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isIPv6CIDRString(tt.cidr); got != tt.want {
+				t.Errorf("isIPv6CIDRString() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
