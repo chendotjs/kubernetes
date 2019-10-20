@@ -30,13 +30,28 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/exec"
+	netutils "k8s.io/utils/net"
 
 	"k8s.io/klog"
 )
 
+const (
+	maxRowOfMatchLinePerIPv6CIDR = 4
+	hexCIDR8ZeroPadding          = "00000000"
+	hexCIDRZeroIPv6              = "00000000000000000000000000000000/00000000000000000000000000000000"
+
+	tcFilterIPv4Protocol = "ip"
+	tcFilterIPv6Protocol = "ipv6"
+	tcFilterIPv4Priority = "1"
+	tcFilterIPv6Priority = "2"
+	u32MatchIPv4Protocol = "ip"
+	u32MatchIPv6Protocol = "ip6"
+)
+
 var (
-	classShowMatcher      = regexp.MustCompile(`class htb (1:\d+)`)
-	classAndHandleMatcher = regexp.MustCompile(`filter parent 1:.*fh (\d+::\d+).*flowid (\d+:\d+)`)
+	classShowMatcher          = regexp.MustCompile(`class htb (1:\d+)`)
+	classAndHandleIPv4Matcher = regexp.MustCompile(`filter parent 1: protocol ip .*fh (\d+::\d+).*flowid (\d+:\d+)`)
+	classAndHandleIPv6Matcher = regexp.MustCompile(`filter parent 1: protocol ipv6 .*fh (\d+::\d+).*flowid (\d+:\d+)`)
 )
 
 // tcShaper provides an implementation of the Shaper interface on Linux using the 'tc' tool.
@@ -145,9 +160,19 @@ func (t *tcShaper) findCIDRClass(cidr string) (classAndHandleList [][]string, fo
 	if err != nil {
 		return classAndHandleList, false, err
 	}
-	spec := fmt.Sprintf("match %s", hex)
 
-	scanner := bufio.NewScanner(bytes.NewBuffer(data))
+	isIPv6 := netutils.IsIPv6CIDRString(cidr)
+
+	if isIPv6 {
+		return t.findIPv6CIDRClass(hex, data)
+	}
+	return t.findIPv4CIDRClass(hex, data)
+}
+
+func (t *tcShaper) findIPv4CIDRClass(hexCIDR string, cmdOutput []byte) (classAndHandleList [][]string, found bool, err error) {
+	spec := fmt.Sprintf("match %s", hexCIDR)
+
+	scanner := bufio.NewScanner(bytes.NewBuffer(cmdOutput))
 	filter := ""
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -162,7 +187,7 @@ func (t *tcShaper) findCIDRClass(cidr string) (classAndHandleList [][]string, fo
 			// expected tc line:
 			// `filter parent 1: protocol ip pref 1 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1` (old version) or
 			// `filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw` (new version)
-			matches := classAndHandleMatcher.FindStringSubmatch(filter)
+			matches := classAndHandleIPv4Matcher.FindStringSubmatch(filter)
 			if len(matches) != 3 {
 				return classAndHandleList, false, fmt.Errorf("unexpected output from tc: %s %d (%v)", filter, len(matches), matches)
 			}
@@ -174,6 +199,93 @@ func (t *tcShaper) findCIDRClass(cidr string) (classAndHandleList [][]string, fo
 		return classAndHandleList, true, nil
 	}
 	return classAndHandleList, false, nil
+}
+
+func (t *tcShaper) findIPv6CIDRClass(hexCIDR string, cmdOutput []byte) (classAndHandleList [][]string, found bool, err error) {
+	outputLines := []string{}
+
+	scanner := bufio.NewScanner(bytes.NewBuffer(cmdOutput))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if len(line) == 0 {
+			continue
+		}
+		outputLines = append(outputLines, line)
+	}
+
+	var slow, fast int = 0, 0
+	for slow < len(outputLines) && fast < len(outputLines) {
+		matches := classAndHandleIPv6Matcher.FindStringSubmatch(outputLines[slow])
+		if len(matches) != 3 {
+			slow++
+			continue
+		}
+		// expected outputLines[slow]:
+		// filter parent 1: protocol ipv6 pref 2 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1
+		fast = slow + 1
+		for fast < len(outputLines) {
+			if !isFilterMatchLine(outputLines[fast]) {
+				break
+			}
+			fast++
+		}
+		// e.g. outputMatchLines:
+		// [match 20010db8/ffffffff at 8 match 86a308d3/ffffffff at 12]
+		// [match 20010da8/ffffffff at 24 match 80006023/ffffffff at 28 match 00000000/ffffffff at 32 match 00000230/ffffffff at 36]
+		outputMatchLines := outputLines[slow+1 : fast]
+		slow = fast
+
+		restoreCIDR, err := restoreIPv6HexCIDR(outputMatchLines)
+		if err != nil {
+			return classAndHandleList, false, err
+		}
+
+		if restoreCIDR == hexCIDR {
+			resultTmp := []string{matches[2], matches[1]}
+			classAndHandleList = append(classAndHandleList, resultTmp)
+		}
+	}
+	if len(classAndHandleList) > 0 {
+		return classAndHandleList, true, nil
+	}
+	return classAndHandleList, false, nil
+}
+
+// isFilterMatchLine checks whether a line is in the format of `match <cidr> at <number>`
+func isFilterMatchLine(line string) bool {
+	return strings.Contains(line, "match")
+}
+
+// restoreIPv6HexCIDR restores IPv6 CIDR from match lines of tc filter output
+func restoreIPv6HexCIDR(outputMatchLines []string) (string, error) {
+	if len(outputMatchLines) == 0 {
+		return hexCIDRZeroIPv6, nil
+	}
+
+	var ipv6Address, ipv6Mask string
+	for _, line := range outputMatchLines {
+		parts := strings.Split(line, " ")
+		// expected line:
+		// match <cidr> at <number>
+		if len(parts) != 4 {
+			return "", fmt.Errorf("unexpected output: %v", parts)
+		}
+
+		ipAndMaskParts := strings.Split(parts[1], "/")
+		if len(ipAndMaskParts) != 2 {
+			return "", fmt.Errorf("unexpected output: %v", parts)
+		}
+		ipv6Address += ipAndMaskParts[0]
+		ipv6Mask += ipAndMaskParts[1]
+	}
+
+	rowShort := maxRowOfMatchLinePerIPv6CIDR - len(outputMatchLines)
+	for i := 0; i < rowShort; i++ {
+		ipv6Address += hexCIDR8ZeroPadding
+		ipv6Mask += hexCIDR8ZeroPadding
+	}
+
+	return fmt.Sprintf("%s/%s", ipv6Address, ipv6Mask), nil
 }
 
 func makeKBitString(rsrc *resource.Quantity) string {
@@ -196,6 +308,14 @@ func (t *tcShaper) makeNewClass(rate string) (int, error) {
 }
 
 func (t *tcShaper) Limit(cidr string, upload, download *resource.Quantity) (err error) {
+	isIPv6 := netutils.IsIPv6CIDRString(cidr)
+	if isIPv6 {
+		return t.limitIPv4OrIPv6(cidr, upload, download, tcFilterIPv6Protocol, tcFilterIPv6Priority, u32MatchIPv6Protocol)
+	}
+	return t.limitIPv4OrIPv6(cidr, upload, download, tcFilterIPv4Protocol, tcFilterIPv4Priority, u32MatchIPv4Protocol)
+}
+
+func (t *tcShaper) limitIPv4OrIPv6(cidr string, upload, download *resource.Quantity, tcProtocol, priority, matchProtocol string) (err error) {
 	var downloadClass, uploadClass int
 	if download != nil {
 		if downloadClass, err = t.makeNewClass(makeKBitString(download)); err != nil {
@@ -203,10 +323,10 @@ func (t *tcShaper) Limit(cidr string, upload, download *resource.Quantity) (err 
 		}
 		if err := t.execAndLog("tc", "filter", "add",
 			"dev", t.iface,
-			"protocol", "ip",
+			"protocol", tcProtocol,
 			"parent", "1:0",
-			"prio", "1", "u32",
-			"match", "ip", "dst", cidr,
+			"prio", priority, "u32",
+			"match", matchProtocol, "dst", cidr,
 			"flowid", fmt.Sprintf("1:%d", downloadClass)); err != nil {
 			return err
 		}
@@ -217,10 +337,10 @@ func (t *tcShaper) Limit(cidr string, upload, download *resource.Quantity) (err 
 		}
 		if err := t.execAndLog("tc", "filter", "add",
 			"dev", t.iface,
-			"protocol", "ip",
+			"protocol", tcProtocol,
 			"parent", "1:0",
-			"prio", "1", "u32",
-			"match", "ip", "src", cidr,
+			"prio", priority, "u32",
+			"match", matchProtocol, "src", cidr,
 			"flowid", fmt.Sprintf("1:%d", uploadClass)); err != nil {
 			return err
 		}
