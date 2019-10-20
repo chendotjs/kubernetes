@@ -472,26 +472,57 @@ func TestFindCIDRClass(t *testing.T) {
 }
 
 func TestGetCIDRs(t *testing.T) {
-	fcmd := fakeexec.FakeCmd{
-		CombinedOutputScript: []fakeexec.FakeCombinedOutputAction{
-			func() ([]byte, error) { return []byte(tcFilterOutputIPv4), nil },
+	tests := []struct {
+		output        string
+		expectedCidrs []string
+		expectErr     bool
+		err           error
+	}{
+		{
+			output:        tcFilterOutputIPv4,
+			expectedCidrs: []string{"172.17.0.2/32", "1.2.0.0/16"},
+		},
+		{
+			output:        tcFilterOutputIPv6,
+			expectedCidrs: []string{"2001:da8:8000:6023::230/128", "2001:db8:86a3:8d3::/64"},
+		},
+		{
+			output:        tcFilterOutputIPv4IPv6Mixture,
+			expectedCidrs: []string{"202.120.58.157/32", "1.2.3.4/32", "2001:da8:8000:6023::230/128", "2001:db8:86a3:8d3::/64"},
+		},
+		{
+			err:       errors.New("test error"),
+			expectErr: true,
 		},
 	}
-	fexec := fakeexec.FakeExec{
-		CommandScript: []fakeexec.FakeCommandAction{
-			func(cmd string, args ...string) exec.Cmd {
-				return fakeexec.InitFakeCmd(&fcmd, cmd, args...)
+	for _, test := range tests {
+		fcmd := fakeexec.FakeCmd{
+			CombinedOutputScript: []fakeexec.FakeCombinedOutputAction{
+				func() ([]byte, error) { return []byte(test.output), test.err },
 			},
-		},
-	}
-	shaper := &tcShaper{e: &fexec}
-	cidrs, err := shaper.GetCIDRs()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	expectedCidrs := []string{"172.17.0.2/32", "1.2.0.0/16"}
-	if !reflect.DeepEqual(cidrs, expectedCidrs) {
-		t.Errorf("expected: %v, saw: %v", expectedCidrs, cidrs)
+		}
+		fexec := fakeexec.FakeExec{
+			CommandScript: []fakeexec.FakeCommandAction{
+				func(cmd string, args ...string) exec.Cmd {
+					return fakeexec.InitFakeCmd(&fcmd, cmd, args...)
+				},
+			},
+		}
+		shaper := &tcShaper{e: &fexec}
+		cidrs, err := shaper.GetCIDRs()
+		if test.expectErr {
+			if err == nil {
+				t.Errorf("unexpected non-error")
+			}
+		} else {
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			expectedCidrs := test.expectedCidrs
+			if !reflect.DeepEqual(cidrs, expectedCidrs) {
+				t.Errorf("expected: %v, saw: %v", expectedCidrs, cidrs)
+			}
+		}
 	}
 }
 

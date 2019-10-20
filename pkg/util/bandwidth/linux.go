@@ -529,7 +529,11 @@ func (t *tcShaper) getIPv6CIDRs(outputLines []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, restoreCIDR)
+		cidr, err := asciiCIDR(restoreCIDR)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, cidr)
 	}
 
 	return result, nil
