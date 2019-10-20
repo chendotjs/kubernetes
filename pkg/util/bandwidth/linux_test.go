@@ -974,3 +974,34 @@ func TestRestoreIPv6HexCIDR(t *testing.T) {
 		})
 	}
 }
+
+func TestIsIPv6CIDRString(t *testing.T) {
+	tests := []struct {
+		name string
+		cidr string
+		want bool
+	}{
+		{
+			name: "normal IPv4",
+			cidr: "1.2.3.4/32",
+			want: false,
+		},
+		{
+			name: "normal IPv6",
+			cidr: "::1/128",
+			want: true,
+		},
+		{
+			name: "IPv4 in IPv6 format",
+			cidr: "::ffff:1.2.3.4/128",
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isIPv6CIDRString(tt.cidr); got != tt.want {
+				t.Errorf("isIPv6CIDRString() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

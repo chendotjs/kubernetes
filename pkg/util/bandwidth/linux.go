@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/exec"
-	netutils "k8s.io/utils/net"
 
 	"k8s.io/klog"
 )
@@ -150,6 +149,10 @@ func asciiCIDR(cidr string) (string, error) {
 	return fmt.Sprintf("%s/%d", ip.String(), size), nil
 }
 
+func isIPv6CIDRString(cidr string) bool {
+	return strings.Count(cidr, ":") >= 2
+}
+
 func (t *tcShaper) findCIDRClass(cidr string) (classAndHandleList [][]string, found bool, err error) {
 	data, err := t.e.Command("tc", "filter", "show", "dev", t.iface).CombinedOutput()
 	if err != nil {
@@ -161,9 +164,7 @@ func (t *tcShaper) findCIDRClass(cidr string) (classAndHandleList [][]string, fo
 		return classAndHandleList, false, err
 	}
 
-	isIPv6 := netutils.IsIPv6CIDRString(cidr)
-
-	if isIPv6 {
+	if isIPv6CIDRString(cidr) {
 		return t.findIPv6CIDRClass(hex, data)
 	}
 	return t.findIPv4CIDRClass(hex, data)
@@ -202,19 +203,13 @@ func (t *tcShaper) findIPv4CIDRClass(hexCIDR string, cmdOutput []byte) (classAnd
 }
 
 func (t *tcShaper) findIPv6CIDRClass(hexCIDR string, cmdOutput []byte) (classAndHandleList [][]string, found bool, err error) {
-	outputLines := []string{}
+	outputLines := convertByteSliceToStringSlice(cmdOutput)
 
-	scanner := bufio.NewScanner(bytes.NewBuffer(cmdOutput))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if len(line) == 0 {
-			continue
-		}
-		outputLines = append(outputLines, line)
-	}
-
+	// Since the match line num of `tc filter show dev xxx` output varies from 0 to 4 for IPv6 cidr,
+	// slow and fast are two indexes that indicate the range of match lines in the output.
+	// When slow finds a flowid line, fast continues to search for the succeeding flowid line or end of output from the position of slow.
 	var slow, fast int = 0, 0
-	for slow < len(outputLines) && fast < len(outputLines) {
+	for slow < len(outputLines) {
 		matches := classAndHandleIPv6Matcher.FindStringSubmatch(outputLines[slow])
 		if len(matches) != 3 {
 			slow++
@@ -308,14 +303,13 @@ func (t *tcShaper) makeNewClass(rate string) (int, error) {
 }
 
 func (t *tcShaper) Limit(cidr string, upload, download *resource.Quantity) (err error) {
-	isIPv6 := netutils.IsIPv6CIDRString(cidr)
-	if isIPv6 {
-		return t.limitIPv4OrIPv6(cidr, upload, download, tcFilterIPv6Protocol, tcFilterIPv6Priority, u32MatchIPv6Protocol)
+	if isIPv6CIDRString(cidr) {
+		return t.limit(cidr, upload, download, tcFilterIPv6Protocol, tcFilterIPv6Priority, u32MatchIPv6Protocol)
 	}
-	return t.limitIPv4OrIPv6(cidr, upload, download, tcFilterIPv4Protocol, tcFilterIPv4Priority, u32MatchIPv4Protocol)
+	return t.limit(cidr, upload, download, tcFilterIPv4Protocol, tcFilterIPv4Priority, u32MatchIPv4Protocol)
 }
 
-func (t *tcShaper) limitIPv4OrIPv6(cidr string, upload, download *resource.Quantity, tcProtocol, priority, matchProtocol string) (err error) {
+func (t *tcShaper) limit(cidr string, upload, download *resource.Quantity, tcProtocol, priority, matchProtocol string) (err error) {
 	var downloadClass, uploadClass int
 	if download != nil {
 		if downloadClass, err = t.makeNewClass(makeKBitString(download)); err != nil {
@@ -393,7 +387,7 @@ func (t *tcShaper) ReconcileInterface() error {
 	// qdisc htb 1: root refcnt 2 r2q 10 default 0x30 direct_packets_stat 86 direct_qlen 1000
 	fields := strings.Split(output, " ")
 	if len(fields) < 12 || fields[1] != "htb" || fields[2] != "1:" {
-		if err := t.deleteInterface(fields[2]); err != nil {
+		if err := t.deleteInterface(fields[2]); err != nil && !noSuchQdisc(err) {
 			return err
 		}
 		return t.initializeInterface()
@@ -443,16 +437,7 @@ func (t *tcShaper) GetCIDRs() ([]string, error) {
 	}
 
 	result := []string{}
-	outputLines := []string{}
-
-	scanner := bufio.NewScanner(bytes.NewBuffer(data))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if len(line) == 0 {
-			continue
-		}
-		outputLines = append(outputLines, line)
-	}
+	outputLines := convertByteSliceToStringSlice(data)
 
 	ipv4Result, err := t.getIPv4CIDRs(outputLines)
 	if err != nil {
@@ -503,8 +488,11 @@ func (t *tcShaper) getIPv4CIDRs(outputLines []string) ([]string, error) {
 func (t *tcShaper) getIPv6CIDRs(outputLines []string) ([]string, error) {
 	result := []string{}
 
+	// Since the match line num of `tc filter show dev xxx` output varies from 0 to 4 for IPv6 cidr,
+	// slow and fast are two indexes that indicate the range of match lines in the output.
+	// When slow finds a flowid line, fast continues to search for the succeeding flowid line or end of output from the position of slow.
 	var slow, fast int = 0, 0
-	for slow < len(outputLines) && fast < len(outputLines) {
+	for slow < len(outputLines) {
 		matches := classAndHandleIPv6Matcher.FindStringSubmatch(outputLines[slow])
 		if len(matches) != 3 {
 			slow++
@@ -537,4 +525,26 @@ func (t *tcShaper) getIPv6CIDRs(outputLines []string) ([]string, error) {
 	}
 
 	return result, nil
+}
+func convertByteSliceToStringSlice(data []byte) []string {
+	lines := []string{}
+
+	scanner := bufio.NewScanner(bytes.NewBuffer(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, line)
+	}
+
+	return lines
+}
+
+func noSuchQdisc(err error) bool {
+	exitErr, ok := err.(*exec.ExitErrorWrapper)
+	if ok {
+		return exitErr.ExitCode() == 0x2
+	}
+	return false
 }
