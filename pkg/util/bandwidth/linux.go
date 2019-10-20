@@ -189,7 +189,7 @@ func (t *tcShaper) findIPv4CIDRClass(hexCIDR string, cmdOutput []byte) (classAnd
 			// `filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw` (new version)
 			matches := classAndHandleIPv4Matcher.FindStringSubmatch(filter)
 			if len(matches) != 3 {
-				return classAndHandleList, false, fmt.Errorf("unexpected output from tc: %s %d (%v)", filter, len(matches), matches)
+				continue
 			}
 			resultTmp := []string{matches[2], matches[1]}
 			classAndHandleList = append(classAndHandleList, resultTmp)
@@ -443,25 +443,94 @@ func (t *tcShaper) GetCIDRs() ([]string, error) {
 	}
 
 	result := []string{}
+	outputLines := []string{}
+
 	scanner := bufio.NewScanner(bytes.NewBuffer(data))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if len(line) == 0 {
 			continue
 		}
-		if strings.Contains(line, "match") {
-			parts := strings.Split(line, " ")
-			// expected tc line:
-			// match <cidr> at <number>
-			if len(parts) != 4 {
-				return nil, fmt.Errorf("unexpected output: %v", parts)
-			}
-			cidr, err := asciiCIDR(parts[1])
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, cidr)
-		}
+		outputLines = append(outputLines, line)
 	}
+
+	ipv4Result, err := t.getIPv4CIDRs(outputLines)
+	if err != nil {
+		return nil, err
+	}
+
+	ipv6Result, err := t.getIPv6CIDRs(outputLines)
+	if err != nil {
+		return nil, err
+	}
+
+	result = append(result, ipv4Result...)
+	result = append(result, ipv6Result...)
+
+	return result, nil
+}
+
+func (t *tcShaper) getIPv4CIDRs(outputLines []string) ([]string, error) {
+	result := []string{}
+
+	for i := 0; i < len(outputLines); i++ {
+		matches := classAndHandleIPv4Matcher.FindStringSubmatch(outputLines[i])
+		if len(matches) != 3 {
+			continue
+		}
+
+		if i+1 >= len(outputLines) {
+			return nil, fmt.Errorf("unexpected output after: %v", outputLines[i])
+		}
+
+		parts := strings.Split(outputLines[i+1], " ")
+		// expected tc line:
+		// match <cidr> at <number>
+		if len(parts) != 4 {
+			return nil, fmt.Errorf("unexpected output: %v", parts)
+		}
+		cidr, err := asciiCIDR(parts[1])
+		if err != nil {
+			return nil, err
+		}
+		i++
+		result = append(result, cidr)
+	}
+
+	return result, nil
+}
+
+func (t *tcShaper) getIPv6CIDRs(outputLines []string) ([]string, error) {
+	result := []string{}
+
+	var slow, fast int = 0, 0
+	for slow < len(outputLines) && fast < len(outputLines) {
+		matches := classAndHandleIPv6Matcher.FindStringSubmatch(outputLines[slow])
+		if len(matches) != 3 {
+			slow++
+			continue
+		}
+		// expected outputLines[slow]:
+		// filter parent 1: protocol ipv6 pref 2 u32 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1
+		fast = slow + 1
+		for fast < len(outputLines) {
+			if !isFilterMatchLine(outputLines[fast]) {
+				break
+			}
+			fast++
+		}
+		// e.g. outputMatchLines:
+		// [match 20010db8/ffffffff at 8 match 86a308d3/ffffffff at 12]
+		// [match 20010da8/ffffffff at 24 match 80006023/ffffffff at 28 match 00000000/ffffffff at 32 match 00000230/ffffffff at 36]
+		outputMatchLines := outputLines[slow+1 : fast]
+		slow = fast
+
+		restoreCIDR, err := restoreIPv6HexCIDR(outputMatchLines)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, restoreCIDR)
+	}
+
 	return result, nil
 }

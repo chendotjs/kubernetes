@@ -273,6 +273,29 @@ filter parent 1: protocol ipv6 pref 2 u32 fh 800::801 order 2049 key ht 800 bkt 
   match 86a308d3/ffffffff at 12
 `
 
+var tcFilterOutputIPv4IPv6Similar1 = `filter parent 1: protocol ip pref 1 u32 chain 0 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+  match 01020304/ffffffff at 12
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801::800 order 2048 key ht 801 bkt 0 flowid 1:2 not_in_hw 
+  match 01020304/ffffffff at 8
+`
+
+var tcFilterOutputIPv4IPv6Similar2 = `filter parent 1: protocol ip pref 1 u32 chain 0 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800: ht divisor 1 
+filter parent 1: protocol ip pref 1 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 flowid 1:1 not_in_hw 
+  match 01020304/ffffffff at 12
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801: ht divisor 1 
+filter parent 1: protocol ipv6 pref 2 u32 chain 0 fh 801::800 order 2048 key ht 801 bkt 0 flowid 1:2 not_in_hw 
+  match 00000000/ffffffff at 8
+  match 00000000/ffffffff at 12
+  match 00000000/ffffffff at 16
+  match 01020304/ffffffff at 20
+`
+
 func TestFindCIDRClass(t *testing.T) {
 	tests := []struct {
 		cidr           string
@@ -379,6 +402,30 @@ func TestFindCIDRClass(t *testing.T) {
 			cidr:           "192.168.1.46/32",
 			output:         tcFilterOutputIPv4IPv6Mixture,
 			expectNotFound: true,
+		},
+		{
+			cidr:           "1.2.3.4/32",
+			output:         tcFilterOutputIPv4IPv6Similar1,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "0102:0304::/32",
+			output:         tcFilterOutputIPv4IPv6Similar1,
+			expectedClass:  "1:2",
+			expectedHandle: "801::800",
+		},
+		{
+			cidr:           "1.2.3.4/32",
+			output:         tcFilterOutputIPv4IPv6Similar2,
+			expectedClass:  "1:1",
+			expectedHandle: "800::800",
+		},
+		{
+			cidr:           "::0102:0304/128",
+			output:         tcFilterOutputIPv4IPv6Similar2,
+			expectedClass:  "1:2",
+			expectedHandle: "801::800",
 		},
 		{
 			err:       errors.New("test error"),
