@@ -925,7 +925,7 @@ func TestRequestWatch(t *testing.T) {
 					Type: watch.Error,
 					Object: &metav1.Status{
 						Status:  "Failure",
-						Code:    500,
+						Code:    http.StatusInternalServerError,
 						Reason:  "InternalError",
 						Message: `an error on the server ("unable to decode an event from the watch stream: test error") has prevented the request from succeeding`,
 						Details: &metav1.StatusDetails{
@@ -1233,7 +1233,7 @@ func TestDoRequestNewWay(t *testing.T) {
 	}}}}
 	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), expectedObj)
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:   200,
+		StatusCode:   http.StatusOK,
 		ResponseBody: string(expectedBody),
 		T:            t,
 	}
@@ -1468,7 +1468,7 @@ func TestDoRequestNewWayReader(t *testing.T) {
 	}}}}
 	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), expectedObj)
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:   200,
+		StatusCode:   http.StatusOK,
 		ResponseBody: string(expectedBody),
 		T:            t,
 	}
@@ -1507,7 +1507,7 @@ func TestDoRequestNewWayObj(t *testing.T) {
 	}}}}
 	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), expectedObj)
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:   200,
+		StatusCode:   http.StatusOK,
 		ResponseBody: string(expectedBody),
 		T:            t,
 	}
@@ -1562,7 +1562,7 @@ func TestDoRequestNewWayFile(t *testing.T) {
 	}}}}
 	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), expectedObj)
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:   200,
+		StatusCode:   http.StatusOK,
 		ResponseBody: string(expectedBody),
 		T:            t,
 	}
@@ -1607,7 +1607,7 @@ func TestWasCreated(t *testing.T) {
 	}}}}
 	expectedBody, _ := runtime.Encode(scheme.Codecs.LegacyCodec(v1.SchemeGroupVersion), expectedObj)
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:   201,
+		StatusCode:   http.StatusCreated,
 		ResponseBody: string(expectedBody),
 		T:            t,
 	}

@@ -19,6 +19,7 @@ package replicaset
 import (
 	"errors"
 	"fmt"
+	"http"
 	"math/rand"
 	"net/http/httptest"
 	"net/url"
@@ -283,7 +284,7 @@ func TestSyncReplicaSetCreateFailures(t *testing.T) {
 func TestSyncReplicaSetDormancy(t *testing.T) {
 	// Setup a test server so we can lie about the current state of pods
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:    200,
+		StatusCode:    http.StatusOK,
 		ResponseBody:  "{}",
 		SkipRequestFn: skipListerFunc,
 		T:             t,

@@ -18,6 +18,7 @@ package tests
 
 import (
 	"context"
+	"http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -98,7 +99,7 @@ func TestListWatchesCanList(t *testing.T) {
 	}
 	for _, item := range table {
 		handler := utiltesting.FakeHandler{
-			StatusCode:   500,
+			StatusCode:   http.StatusInternalServerError,
 			ResponseBody: "",
 			T:            t,
 		}
@@ -165,7 +166,7 @@ func TestListWatchesCanWatch(t *testing.T) {
 
 	for _, item := range table {
 		handler := utiltesting.FakeHandler{
-			StatusCode:   500,
+			StatusCode:   http.StatusInternalServerError,
 			ResponseBody: "",
 			T:            t,
 		}

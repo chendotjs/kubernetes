@@ -19,6 +19,7 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
+	"http"
 	"math"
 	"math/rand"
 	"net/http/httptest"
@@ -281,7 +282,7 @@ func TestCreatePods(t *testing.T) {
 	ns := metav1.NamespaceDefault
 	body := runtime.EncodeOrDie(testapi.Default.Codec(), &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "empty_pod"}})
 	fakeHandler := utiltesting.FakeHandler{
-		StatusCode:   200,
+		StatusCode:   http.StatusOK,
 		ResponseBody: string(body),
 	}
 	testServer := httptest.NewServer(&fakeHandler)
