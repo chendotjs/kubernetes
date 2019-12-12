@@ -255,7 +255,7 @@ type Dependencies struct {
 	KubeClient              clientset.Interface
 	Mounter                 mount.Interface
 	HostUtil                hostutil.HostUtils
-	OOMAdjuster             *oom.OOMAdjuster
+	OOMAdjuster             oom.Interface
 	OSInterface             kubecontainer.OSInterface
 	PodConfig               *config.PodConfig
 	Recorder                record.EventRecorder
