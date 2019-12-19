@@ -874,7 +874,7 @@ func (plugin *kubenetNetworkPlugin) getRangesConfig() string {
 		ranges[idx] = createRange(thisCIDR)
 	}
 	//[{range}], [{range}]
-	// each range is a subnet, gateway will fetched from cni result
+	// each range contains a subnet. gateway will be fetched from cni result
 	return strings.Join(ranges[:], ",")
 }
 
