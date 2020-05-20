@@ -434,6 +434,9 @@ func (f *framework) RunFilterPlugins(
 		if len(statuses) == 0 {
 			firstFailedStatus = pluginStatus
 		}
+		if nodeInfo.Node() != nil {
+			klog.V(4).Infof("-----RunFilterPlugins filters node %v: plugin %s returns status %v, IsSuccess: %v, IsUnschedulable: %v, Message: %v", nodeInfo.Node().Name, pl.Name(), pluginStatus, pluginStatus.IsSuccess(), pluginStatus.IsUnschedulable(), pluginStatus.Message())
+		}
 		if !pluginStatus.IsSuccess() {
 			if !pluginStatus.IsUnschedulable() {
 				// Filter plugins are not supposed to return any status other than

@@ -55,6 +55,7 @@ func (b DefaultBinder) Bind(ctx context.Context, state *framework.CycleState, p 
 	}
 	err := b.handle.ClientSet().CoreV1().Pods(binding.Namespace).Bind(context.TODO(), binding, metav1.CreateOptions{})
 	if err != nil {
+		klog.Errorf("DefaultBinder bind error: %v", err)
 		return framework.NewStatus(framework.Error, err.Error())
 	}
 	return nil

@@ -43,6 +43,21 @@ type preScoreState struct {
 	TopologyPairToPodCounts map[topologyPair]*int64
 }
 
+func (s *preScoreState) String() string {
+	str := "**********\n"
+	if s == nil {
+		return str
+	}
+	for idx, constraint := range s.Constraints {
+		str += fmt.Sprintf("%d. constraint: maxSkew: %d, topologyKey: %s, label-selector: %s\n", idx+1, constraint.MaxSkew, constraint.TopologyKey, constraint.Selector.String())
+	}
+	str += fmt.Sprintf("nodeNameSet: %+v\n", s.NodeNameSet.List())
+	for tpPair, podCount := range s.TopologyPairToPodCounts {
+		str += fmt.Sprintf("tpPair: %+v, podCount: %+v\n", tpPair, *podCount)
+	}
+	return str + "**********\n"
+}
+
 // Clone implements the mandatory Clone interface. We don't really copy the data since
 // there is no need for that.
 func (s *preScoreState) Clone() framework.StateData {
@@ -98,6 +113,14 @@ func (pl *PodTopologySpread) PreScore(
 		return framework.NewStatus(framework.Error, fmt.Sprintf("error when getting all nodes: %v", err))
 	}
 
+	if true {
+		nodeNames := ""
+		for _, node := range filteredNodes {
+			nodeNames += node.Name + ", "
+		}
+		klog.V(4).Infof("-----PodTopologySpread PreScore: prescore pod %v/%v with filteredNodes: %+v", pod.Namespace, pod.Name, nodeNames)
+	}
+
 	if len(filteredNodes) == 0 || len(allNodes) == 0 {
 		// No nodes to score.
 		return nil
@@ -111,10 +134,12 @@ func (pl *PodTopologySpread) PreScore(
 	if err != nil {
 		return framework.NewStatus(framework.Error, fmt.Sprintf("error when calculating preScoreState: %v", err))
 	}
+	klog.V(4).Infof("-----PodTopologySpread PreScore: init preScoreState: %+v", state.String())
 
 	// return if incoming pod doesn't have soft topology spread Constraints.
 	if len(state.Constraints) == 0 {
 		cycleState.Write(preScoreStateKey, state)
+		klog.V(4).Infof("-----PodTopologySpread PreScore: pod %v/%v doesn't have soft topology spread Constraints", pod.Namespace, pod.Name)
 		return nil
 	}
 
@@ -128,6 +153,7 @@ func (pl *PodTopologySpread) PreScore(
 		// (2) All topologyKeys need to be present in `node`
 		if !pluginhelper.PodMatchesNodeSelectorAndAffinityTerms(pod, node) ||
 			!nodeLabelsMatchSpreadConstraints(node.Labels, state.Constraints) {
+			klog.V(4).Infof("-----PodTopologySpread PreScore: node %s label does not contain all constraints's topologyKeys, ignore", node.Name)
 			return
 		}
 
@@ -150,10 +176,13 @@ func (pl *PodTopologySpread) PreScore(
 					matchSum++
 				}
 			}
+			klog.V(4).Infof("-----PodTopologySpread PreScore: node %+v has %d pods matches constraint selector %v", node.Name, matchSum, c.Selector.String())
 			atomic.AddInt64(state.TopologyPairToPodCounts[pair], matchSum)
 		}
 	}
 	workqueue.ParallelizeUntil(ctx, 16, len(allNodes), processAllNode)
+
+	klog.V(4).Infof("-----PodTopologySpread PreScore: preScoreState after processAllNode: %+v", state.String())
 
 	cycleState.Write(preScoreStateKey, state)
 	return nil
@@ -173,9 +202,11 @@ func (pl *PodTopologySpread) Score(ctx context.Context, cycleState *framework.Cy
 	if err != nil {
 		return 0, framework.NewStatus(framework.Error, err.Error())
 	}
+	klog.V(4).Infof("-----PodTopologySpread Score: pod %v on node %v getPreScoreState %+v", pod.Name, node.Name, s.String())
 
 	// Return if the node is not qualified.
 	if _, ok := s.NodeNameSet[node.Name]; !ok {
+		klog.V(4).Infof("-----PodTopologySpread Score: pod %v on unqualified node %v gets score %+v", pod.Name, node.Name, 0)
 		return 0, nil
 	}
 
@@ -187,8 +218,10 @@ func (pl *PodTopologySpread) Score(ctx context.Context, cycleState *framework.Cy
 			pair := topologyPair{key: c.TopologyKey, value: tpVal}
 			matchSum := *s.TopologyPairToPodCounts[pair]
 			score += matchSum
+			klog.V(4).Infof("-----PodTopologySpread Score: topologyPair %+v on node %v gets matchSum %+v", pair, node.Name, matchSum)
 		}
 	}
+	klog.V(4).Infof("-----PodTopologySpread Score: pod %v on node %v gets score %v", pod.Name, node.Name, score)
 	return score, nil
 }
 
@@ -201,6 +234,8 @@ func (pl *PodTopologySpread) NormalizeScore(ctx context.Context, cycleState *fra
 	if s == nil {
 		return nil
 	}
+	klog.V(4).Infof("-----PodTopologySpread NormalizeScore: start to normalize pod %v with NodeScoreList: %+v", pod.Name, scores)
+	klog.V(4).Infof("-----PodTopologySpread NormalizeScore: pod %v gets preScoreState: %+v", pod.Name, s.String())
 
 	// Calculate the summed <total> score and <minScore>.
 	var minScore int64 = math.MaxInt64
@@ -216,6 +251,8 @@ func (pl *PodTopologySpread) NormalizeScore(ctx context.Context, cycleState *fra
 		}
 	}
 
+	klog.V(4).Infof("-----PodTopologySpread NormalizeScore: pod %v, total: %v, minScore: %v", pod.Name, total, minScore)
+
 	maxMinDiff := total - minScore
 	for i := range scores {
 		nodeInfo, err := pl.sharedLister.NodeInfos().Get(scores[i].Name)
@@ -230,9 +267,15 @@ func (pl *PodTopologySpread) NormalizeScore(ctx context.Context, cycleState *fra
 				klog.Infof("%v -> %v: PodTopologySpread NormalizeScore, Score: (%d)", pod.Name, nodeName, *score)
 			}(&scores[i].Score, node.Name)
 		}
+		if klog.V(4) {
+			defer func(score *int64, nodeName string) {
+				klog.Infof("----PodTopologySpread NormalizeScore: pod %v on node %v gets score %d", pod.Name, nodeName, *score)
+			}(&scores[i].Score, node.Name)
+		}
 
 		if maxMinDiff == 0 {
 			scores[i].Score = framework.MaxNodeScore
+			klog.Infof("----PodTopologySpread NormalizeScore: pod %v on node %v gets maxMinDiff == 0, get score %d", pod.Name, node.Name, framework.MaxNodeScore)
 			continue
 		}
 
@@ -244,6 +287,7 @@ func (pl *PodTopologySpread) NormalizeScore(ctx context.Context, cycleState *fra
 		flippedScore := total - scores[i].Score
 		fScore := float64(framework.MaxNodeScore) * (float64(flippedScore) / float64(maxMinDiff))
 		scores[i].Score = int64(fScore)
+		klog.Infof("----PodTopologySpread NormalizeScore: pod %v on node %v gets flippedScore %d, maxMinDiff %d", pod.Name, node.Name, flippedScore, maxMinDiff)
 	}
 	return nil
 }

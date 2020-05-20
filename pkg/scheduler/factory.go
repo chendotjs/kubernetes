@@ -223,6 +223,7 @@ func (c *Configurator) createFromProvider(providerName string) (*Scheduler, erro
 	if !exist {
 		return nil, fmt.Errorf("algorithm provider %q is not registered", providerName)
 	}
+	klog.V(4).Infof("-----createFromProvider: defaultPlugins is %+v", *defaultPlugins)
 
 	for i := range c.profiles {
 		prof := &c.profiles[i]

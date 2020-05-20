@@ -20,6 +20,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/helper"
 )
 
@@ -68,6 +69,7 @@ func nodeLabelsMatchSpreadConstraints(nodeLabels map[string]string, constraints 
 func filterTopologySpreadConstraints(constraints []v1.TopologySpreadConstraint, action v1.UnsatisfiableConstraintAction) ([]topologySpreadConstraint, error) {
 	var result []topologySpreadConstraint
 	for _, c := range constraints {
+		// filter out this is a predicate (hard requirement) or a priority (soft requirement)
 		if c.WhenUnsatisfiable == action {
 			selector, err := metav1.LabelSelectorAsSelector(c.LabelSelector)
 			if err != nil {
@@ -80,5 +82,6 @@ func filterTopologySpreadConstraints(constraints []v1.TopologySpreadConstraint, 
 			})
 		}
 	}
+	klog.V(4).Infof("-----filterTopologySpreadConstraints: constraints: %+v, result: %+v", constraints, result)
 	return result, nil
 }
